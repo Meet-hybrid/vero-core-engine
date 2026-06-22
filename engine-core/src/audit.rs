@@ -5,10 +5,13 @@
 //! and hash integrity before they are persisted.
 
 use soroban_sdk::{contracterror, panic_with_error, symbol_short, Env, Symbol, BytesN, Map, IntoVal};
+use soroban_sdk::{contracterror, panic_with_error, symbol_short, Env, Symbol, BytesN};
+use crate::event_struct::{MOD_AUDIT, ACT_COMMIT};
 use crate::event_utils::publish_event;
 use sha2::{Digest, Sha256};
 
 use crate::types::StateCommitment;
+use crate::circuit_breaker::assert_closed;
 
 const KEY_SEQ:  Symbol = symbol_short!("SEQ");
 const KEY_PREV: Symbol = symbol_short!("PREV_H");
@@ -16,8 +19,8 @@ const KEY_PREV: Symbol = symbol_short!("PREV_H");
 #[contracterror]
 #[derive(Copy, Clone)]
 pub enum AuditError {
-    ReplayedSequence  = 1,
-    HashMismatch      = 2,
+    ReplayedSequence   = 1,
+    HashMismatch       = 2,
     AuthorUnauthorised = 3,
 }
 
@@ -36,6 +39,7 @@ pub fn compute_commitment(prev_hash: &[u8; 32], sequence: u64, payload: &[u8]) -
 /// - `commitment.sequence` ≤ last recorded sequence (replay guard)
 /// - `commitment.state_hash` doesn't match the expected derivation
 pub fn validate_transition(env: &Env, commitment: &StateCommitment, payload: &[u8]) {
+    assert_closed(env);
     let last_seq: u64 = env.storage().instance().get(&KEY_SEQ).unwrap_or(0);
     if commitment.sequence <= last_seq {
         panic_with_error!(env, AuditError::ReplayedSequence);
@@ -56,9 +60,12 @@ pub fn validate_transition(env: &Env, commitment: &StateCommitment, payload: &[u
     env.storage().instance().set(&KEY_SEQ, &commitment.sequence);
     env.storage().instance().set(&KEY_PREV, &actual);
 
-    env.events().publish(
-        (symbol_short!("AUDIT"), symbol_short!("commit")),
-        (commitment.sequence, commitment.state_hash.clone()),
+    // Single compact event — replaces the previous double-emit pattern.
+    publish_event(
+        env,
+        MOD_AUDIT | ACT_COMMIT,
+        commitment.sequence,
+        commitment.state_hash.clone(),
     );
     // Emit structured Event for audit logs
     let mut payload = Map::new(env);
