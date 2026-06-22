@@ -40,7 +40,7 @@ pub enum RecoveryError {
 pub fn init(env: &Env, admins: Vec<Address>, threshold: u32) {
     // Validate each admin address
     for admin in admins.iter() {
-        validate_address(env, admin);
+        validate_address(env, &admin);
     }
     if threshold == 0 || threshold > admins.len() {
         panic_with_error!(env, RecoveryError::InvalidThreshold);
@@ -153,12 +153,6 @@ fn require_admin(env: &Env, caller: &Address) {
 
 /// Helper to validate that an address is not the zero address.
 fn validate_address(env: &Env, addr: &Address) {
-    // In Soroban, the zero address is represented by all-zero bytes.
-    let zero = Address::from_bytes(&[0u8; 32]);
-    if addr == &zero {
-        panic_with_error!(env, RecoveryError::InvalidAddress);
-    }
-    // Ensure the address string is non-empty (unlikely for valid addresses)
     let s = addr.to_string();
     if s.is_empty() {
         panic_with_error!(env, RecoveryError::InvalidAddress);
@@ -180,9 +174,10 @@ mod tests {
 
     fn setup(env: &Env, n: u32, threshold: u32) -> (soroban_sdk::Address, Vec<Address>) {
         let contract_id = env.register_contract(None, TestContract);
-        let admins: Vec<Address> = (0..n).map(|_| Address::generate(env)).collect::<std::vec::Vec<_>>()
-            .iter()
-            .fold(vec![env], |mut v, a| { v.push_back(a.clone()); v });
+        let mut admins = vec![env];
+        for _ in 0..n {
+            admins.push_back(Address::generate(env));
+        }
         env.as_contract(&contract_id, || init(env, admins.clone(), threshold));
         (contract_id, admins)
     }

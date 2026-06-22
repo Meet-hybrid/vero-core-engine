@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, contracterror};
+use soroban_sdk::{contracttype, contracterror, Address, BytesN, Map, String, Symbol, Val};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -32,7 +32,22 @@ pub enum BreakerState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StateCommitment {
     pub sequence: u64,
-    pub state_hash: soroban_sdk::BytesN<32>,
+    pub state_hash: BytesN<32>,
+    pub ledger: u32,
+    pub author: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasurySnapshot {
+    pub id: u64,
+    pub total_balance: i128,
+    pub account_count: u32,
+    pub ledger: u32,
+    pub timestamp: String,
+    pub state_hash: BytesN<32>,
+    pub triggered_by: String,
+    pub context: Map<Symbol, Val>,
 }
 
 #[contracttype]
@@ -42,6 +57,6 @@ pub struct Proposal {
     pub proposer: soroban_sdk::Address,
     pub action_hash: soroban_sdk::BytesN<32>,
     pub approved_by: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub state: u32, 
-    pub voting_deadline: u32, // Absolute ledger sequence where voting window closes
+    pub state: ProposalState,
+    pub voting_deadline: u32,
 }

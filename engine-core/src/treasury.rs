@@ -8,7 +8,7 @@
 //!   SNAP:<id>       → TreasurySnapshot indexed by ID
 //!   SNAP:LATEST     → Most recent snapshot ID
 
-use soroban_sdk::{contracterror, panic_with_error, symbol_short, BytesN, Bytes, Env, Map, String, Symbol, Vec, Val};
+use soroban_sdk::{contracterror, panic_with_error, symbol_short, BytesN, Bytes, Env, IntoVal, Map, String, Symbol, Vec};
 use crate::event_utils::publish_event;
 
 use crate::types::TreasurySnapshot;
@@ -49,7 +49,7 @@ pub fn record_snapshot(
     let state_hash = compute_hash(env, total_balance, account_count, env.ledger().sequence());
 
     // Store ledger timestamp as u64; soroban_sdk::String is used for triggered_by label.
-    let ts_str = String::from_str(env, &format!("{}", env.ledger().timestamp()));
+    let ts_str = String::from_str(env, &alloc::format!("{}", env.ledger().timestamp()));
 
     let snapshot = TreasurySnapshot {
         id: snapshot_id,
@@ -73,10 +73,10 @@ pub fn record_snapshot(
     );
     // Emit structured Event for treasury snapshot
     let mut payload = Map::new(env);
-    payload.set(Symbol::short("id"), snapshot_id.into());
-    payload.set(Symbol::short("balance"), total_balance.into());
-    payload.set(Symbol::short("accounts"), account_count.into());
-    payload.set(Symbol::short("ledger"), env.ledger().sequence().into());
+    payload.set(symbol_short!("id"), snapshot_id.into_val(env));
+    payload.set(symbol_short!("balance"), total_balance.into_val(env));
+    payload.set(symbol_short!("accounts"), account_count.into_val(env));
+    payload.set(symbol_short!("ledger"), env.ledger().sequence().into_val(env));
     publish_event(env, BytesN::from_array(env, &[0u8; 32]), BytesN::from_array(env, &[0u8; 32]), payload);
 
     snapshot_id
@@ -144,13 +144,13 @@ fn compute_hash(env: &Env, balance: i128, account_count: u32, ledger: u32) -> By
 fn make_snap_key(env: &Env, id: u64) -> Symbol {
     // Encode snapshot id into a short symbol: prefix "S" + id as decimal.
     // Symbol is limited to 32 chars; u64 max is 20 digits, safe.
-    Symbol::new(env, &format!("S{}", id))
+    Symbol::new(env, &alloc::format!("S{}", id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, Map, String, Symbol};
+    use soroban_sdk::{Env, Map, String, Symbol};
 
     #[soroban_sdk::contract]
     pub struct TestContract;

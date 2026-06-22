@@ -39,16 +39,6 @@ mod tests {
         BytesN::from_array(env, &[0u8; 32])
     }
 
-    fn make_proposal(env: &Env, id: u64, proposer: &Address) -> Proposal {
-        Proposal {
-            id,
-            action_hash: dummy_hash(env),
-            proposer: proposer.clone(),
-            approved_by: vec![env],
-            state: ProposalState::Pending,
-        }
-    }
-
     /// Init with one signer + optional stake gate. Returns (contract_id, token_address).
     fn init_one(env: &Env, signer: &Address, min_stake: i128) -> (Address, Address) {
         let cid = register_contract(env);
@@ -84,7 +74,7 @@ mod tests {
         let (cid, _) = init_one(&env, &s1, 0);
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &s1));
+            let id = governance::propose(&env, &s1, dummy_hash(&env), 1000);
             governance::approve(&env, &s1, id);
             env.ledger().with_mut(|l| l.sequence_number += 721);
             let executed_prop = governance::execute(&env, id);
@@ -100,7 +90,7 @@ mod tests {
         let (cid, _) = init_one(&env, &s1, 0);
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 2, &s1));
+            let id = governance::propose(&env, &s1, dummy_hash(&env), 1000);
             // Advance ledger past the unlock before approving so approve() should
             // auto-execute when threshold is met.
             env.ledger().with_mut(|l| l.sequence_number += 2000);
@@ -128,7 +118,7 @@ mod tests {
         fund(&env, &token, &signer, 1_000);
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &signer));
+            let id = governance::propose(&env, &signer, dummy_hash(&env), 1000);
             governance::approve(&env, &signer, id);
             let state = env
                 .storage()
@@ -146,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #7)")]
+    #[should_panic(expected = "Error(Contract, #6)")]
     fn test_approve_fails_with_insufficient_stake() {
         let env = Env::default();
         env.mock_all_auths();
@@ -155,7 +145,7 @@ mod tests {
         fund(&env, &token, &signer, 999); // one short
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &signer));
+            let id = governance::propose(&env, &signer, dummy_hash(&env), 1000);
             governance::approve(&env, &signer, id); // InsufficientStake = 7
         });
     }
@@ -168,7 +158,7 @@ mod tests {
         let (cid, _) = init_one(&env, &signer, 0); // no tokens needed
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &signer));
+            let id = governance::propose(&env, &signer, dummy_hash(&env), 1000);
             governance::approve(&env, &signer, id); // must not panic
             let state = env
                 .storage()
@@ -196,7 +186,7 @@ mod tests {
         let cid = init_two(&env, &a, &b);
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &a));
+            let id = governance::propose(&env, &a, dummy_hash(&env), 1000);
 
             governance::approve(&env, &a, id);
             assert_eq!(
@@ -235,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #5)")]
+    #[should_panic(expected = "Error(Contract, #4)")]
     fn test_execute_pending_proposal_rejected() {
         let env = Env::default();
         env.mock_all_auths();
@@ -243,13 +233,13 @@ mod tests {
         let cid = init_two(&env, &a, &Address::generate(&env));
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &a));
+            let id = governance::propose(&env, &a, dummy_hash(&env), 1000);
             governance::execute(&env, id); // InvalidStateTransition = 5
         });
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #4)")]
+    #[should_panic(expected = "Error(Contract, #5)")]
     fn test_execute_before_timelock_rejected() {
         let env = Env::default();
         env.mock_all_auths();
@@ -257,7 +247,7 @@ mod tests {
         let (cid, _) = init_one(&env, &signer, 0);
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &signer));
+            let id = governance::propose(&env, &signer, dummy_hash(&env), 1000);
             governance::approve(&env, &signer, id); // → Approved
             governance::execute(&env, id); // TimelockActive = 4
         });
@@ -276,7 +266,7 @@ mod tests {
         let cid = init_two(&env, &a, &Address::generate(&env));
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &a));
+            let id = governance::propose(&env, &a, dummy_hash(&env), 1000);
             governance::approve(&env, &a, id);
             governance::approve(&env, &a, id); // must panic
         });
@@ -292,7 +282,7 @@ mod tests {
         let cid = init_two(&env, &a, &Address::generate(&env));
 
         env.as_contract(&cid, || {
-            let id = governance::propose(&env, make_proposal(&env, 1, &a));
+            let id = governance::propose(&env, &a, dummy_hash(&env), 1000);
             governance::approve(&env, &outsider, id); // NotASigner = 1
         });
     }

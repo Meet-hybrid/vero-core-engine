@@ -1,6 +1,5 @@
-use soroban_sdk::{contracttype, contractevent, BytesN, Map, Symbol, Val};
+use soroban_sdk::{contracttype, BytesN, Map, Symbol, Val};
 
-#[contractevent]
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Event {
