@@ -8,19 +8,31 @@
 //!   SNAP:<id>       → TreasurySnapshot indexed by ID
 //!   SNAP:LATEST     → Most recent snapshot ID
 
-use soroban_sdk::{contracterror, panic_with_error, symbol_short, BytesN, Bytes, Env, Map, String, Symbol, Vec, Val};
+use soroban_sdk::{contracterror, panic_with_error, symbol_short, BytesN, Bytes, Env, Map, String, Symbol, Vec};
 use crate::event_utils::publish_event;
+use soroban_sdk::IntoVal;
 
 use crate::types::TreasurySnapshot;
 
 const KEY_SNAP_COUNTER: Symbol = symbol_short!("SNAPC");
 const KEY_SNAP_LATEST:  Symbol = symbol_short!("SNAPL");
 
+/// Maximum allowed total balance for a snapshot (prevents overflow/DoS).
+const MAX_SNAPSHOT_BALANCE: i128 = 1_000_000_000_000_000_000_000_000_000_000_000;
+/// Maximum allowed account count in a snapshot.
+const MAX_ACCOUNT_COUNT: u32 = 1_000_000_000;
+/// Maximum number of recent snapshots a caller may request in one call.
+const MAX_RECENT_SNAPSHOTS: u32 = 1000;
+/// Minimum snapshot ID for audit trail iteration.
+const MIN_SNAPSHOT_ID: u64 = 1;
+
 #[contracterror]
 #[derive(Copy, Clone)]
 pub enum TreasuryError {
     SnapshotNotFound = 1,
     InvalidBalance   = 2,
+    InvalidAccountCount = 3,
+    InvalidCount = 4,
 }
 
 /// Initialize treasury snapshot system. Called once at contract deployment.
@@ -42,14 +54,23 @@ pub fn record_snapshot(
     if total_balance < 0 {
         panic_with_error!(env, TreasuryError::InvalidBalance);
     }
+    if total_balance > MAX_SNAPSHOT_BALANCE {
+        panic_with_error!(env, TreasuryError::InvalidBalance);
+    }
+    if account_count == 0 || account_count > MAX_ACCOUNT_COUNT {
+        panic_with_error!(env, TreasuryError::InvalidAccountCount);
+    }
 
     let counter: u64 = env.storage().instance().get(&KEY_SNAP_COUNTER).unwrap_or(0);
-    let snapshot_id = counter + 1;
+    let snapshot_id = counter
+        .checked_add(1)
+        .unwrap_or_else(|| panic_with_error!(env, TreasuryError::SnapshotNotFound));
 
     let state_hash = compute_hash(env, total_balance, account_count, env.ledger().sequence());
 
-    // Store ledger timestamp as u64; soroban_sdk::String is used for triggered_by label.
-    let ts_str = String::from_str(env, &format!("{}", env.ledger().timestamp()));
+    // Convert ledger timestamp to its decimal string without format!.
+    let ts = env.ledger().timestamp();
+    let ts_str = u64_to_string(env, ts);
 
     let snapshot = TreasurySnapshot {
         id: snapshot_id,
@@ -73,10 +94,10 @@ pub fn record_snapshot(
     );
     // Emit structured Event for treasury snapshot
     let mut payload = Map::new(env);
-    payload.set(Symbol::short("id"), snapshot_id.into());
-    payload.set(Symbol::short("balance"), total_balance.into());
-    payload.set(Symbol::short("accounts"), account_count.into());
-    payload.set(Symbol::short("ledger"), env.ledger().sequence().into());
+    payload.set(symbol_short!("id"), snapshot_id.into_val(env));
+    payload.set(symbol_short!("bal"), total_balance.into_val(env));
+    payload.set(symbol_short!("acc"), account_count.into_val(env));
+    payload.set(symbol_short!("ldg"), env.ledger().sequence().into_val(env));
     publish_event(env, BytesN::from_array(env, &[0u8; 32]), BytesN::from_array(env, &[0u8; 32]), payload);
 
     snapshot_id
@@ -101,11 +122,20 @@ pub fn snapshot_count(env: &Env) -> u64 {
 }
 
 /// Get IDs of the most recent `count` snapshots (newest first).
+/// `count` is clamped to `MAX_RECENT_SNAPSHOTS` to prevent DoS.
 pub fn get_recent_snapshots(env: &Env, count: u32) -> Vec<u64> {
     let total = snapshot_count(env);
+    if total == 0 {
+        return Vec::new(env);
+    }
+    let clamped = (count as u64).min(MAX_RECENT_SNAPSHOTS as u64);
+    let start = if total > clamped {
+        total - clamped + 1
+    } else {
+        MIN_SNAPSHOT_ID
+    };
     let mut result = Vec::new(env);
-    let start = if total as u32 > count { (total as u32) - count + 1 } else { 1 };
-    for id in (start as u64..=total).rev() {
+    for id in (start..=total).rev() {
         result.push_back(id);
     }
     result
@@ -118,10 +148,15 @@ pub fn verify_snapshot(env: &Env, snapshot: &TreasurySnapshot) -> bool {
 }
 
 /// Retrieve all snapshots from `from_id` onward (audit trail).
+/// `from_id` is clamped to `MIN_SNAPSHOT_ID` to prevent DoS iteration.
 pub fn audit_trail(env: &Env, from_id: u64) -> Vec<TreasurySnapshot> {
     let total = snapshot_count(env);
+    if total == 0 {
+        return Vec::new(env);
+    }
+    let start = from_id.max(MIN_SNAPSHOT_ID);
     let mut result = Vec::new(env);
-    for id in from_id..=total {
+    for id in start..=total {
         if let Some(snap) = get_snapshot(env, id) {
             result.push_back(snap);
         }
@@ -130,6 +165,23 @@ pub fn audit_trail(env: &Env, from_id: u64) -> Vec<TreasurySnapshot> {
 }
 
 // ── internal ──────────────────────────────────────────────────────────────────
+
+/// Convert a u64 to its decimal string representation (no_std safe).
+fn u64_to_string(env: &Env, val: u64) -> String {
+    if val == 0 {
+        return String::from_str(env, "0");
+    }
+    // 20 digits max for u64
+    let mut buf = [0u8; 20];
+    let mut n = val;
+    let mut i = 20;
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    String::from_str(env, core::str::from_utf8(&buf[i..]).unwrap_or("0"))
+}
 
 fn compute_hash(env: &Env, balance: i128, account_count: u32, ledger: u32) -> BytesN<32> {
     // Pack fields into a fixed-size byte buffer for deterministic hashing.
@@ -142,15 +194,13 @@ fn compute_hash(env: &Env, balance: i128, account_count: u32, ledger: u32) -> By
 }
 
 fn make_snap_key(env: &Env, id: u64) -> Symbol {
-    // Encode snapshot id into a short symbol: prefix "S" + id as decimal.
-    // Symbol is limited to 32 chars; u64 max is 20 digits, safe.
-    Symbol::new(env, &format!("S{}", id))
+    Symbol::new(env, &alloc::format!("S{}", id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, Map, String, Symbol};
+    use soroban_sdk::{Env, Map, String, Symbol};
 
     #[soroban_sdk::contract]
     pub struct TestContract;

@@ -12,7 +12,7 @@
 //!   resets any prior unapproved request.
 
 use soroban_sdk::{
-    contracterror, panic_with_error, symbol_short, token, vec, Address, Env, Symbol, Vec,
+    contracterror, panic_with_error, symbol_short, token, vec, Address, Env, String, Symbol, Vec,
 };
 
 const KEY_ADMINS:    Symbol = symbol_short!("ER_ADMINS");
@@ -26,12 +26,16 @@ const KEY_AMOUNT:    Symbol = symbol_short!("ER_AMOUNT");
 #[derive(Copy, Clone)]
 pub enum RecoveryError {
     NotAdmin            = 1,
-    InvalidAddress      = 6,
     AlreadyApproved     = 2,
     ThresholdNotMet     = 3,
     NoPendingRequest    = 4,
     InvalidThreshold    = 5,
+    InvalidAddress      = 6,
+    InvalidAmount       = 7,
 }
+
+/// Maximum number of approval threshold to prevent DoS/fund exhaustion.
+const MAX_RECOVERY_THRESHOLD: u32 = 50;
 
 /// Initialise the recovery module.
 ///
@@ -40,9 +44,9 @@ pub enum RecoveryError {
 pub fn init(env: &Env, admins: Vec<Address>, threshold: u32) {
     // Validate each admin address
     for admin in admins.iter() {
-        validate_address(env, admin);
+        validate_address(env, &admin);
     }
-    if threshold == 0 || threshold > admins.len() {
+    if threshold == 0 || threshold > admins.len() || threshold > MAX_RECOVERY_THRESHOLD {
         panic_with_error!(env, RecoveryError::InvalidThreshold);
     }
     env.storage().instance().set(&KEY_ADMINS, &admins);
@@ -57,6 +61,10 @@ pub fn init(env: &Env, admins: Vec<Address>, threshold: u32) {
 pub fn request(env: &Env, requester: &Address, token: &Address, dest: &Address, amount: i128) {
     requester.require_auth();
     require_admin(env, requester);
+    // Validate amount is positive (negative/zero would break token transfer)
+    if amount <= 0 {
+        panic_with_error!(env, RecoveryError::InvalidAmount);
+    }
     // Validate token and destination addresses
     validate_address(env, token);
     validate_address(env, dest);
@@ -151,16 +159,13 @@ fn require_admin(env: &Env, caller: &Address) {
     }
 }
 
+/// Stellar well-known zero address (all-A strkey, 56 chars).
+const ZERO_ADDRESS: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
 /// Helper to validate that an address is not the zero address.
 fn validate_address(env: &Env, addr: &Address) {
-    // In Soroban, the zero address is represented by all-zero bytes.
-    let zero = Address::from_bytes(&[0u8; 32]);
-    if addr == &zero {
-        panic_with_error!(env, RecoveryError::InvalidAddress);
-    }
-    // Ensure the address string is non-empty (unlikely for valid addresses)
-    let s = addr.to_string();
-    if s.is_empty() {
+    let zero = String::from_str(env, ZERO_ADDRESS);
+    if addr.to_string() == zero {
         panic_with_error!(env, RecoveryError::InvalidAddress);
     }
 }
@@ -180,9 +185,11 @@ mod tests {
 
     fn setup(env: &Env, n: u32, threshold: u32) -> (soroban_sdk::Address, Vec<Address>) {
         let contract_id = env.register_contract(None, TestContract);
-        let admins: Vec<Address> = (0..n).map(|_| Address::generate(env)).collect::<std::vec::Vec<_>>()
-            .iter()
-            .fold(vec![env], |mut v, a| { v.push_back(a.clone()); v });
+        let std_admins: alloc::vec::Vec<Address> = (0..n).map(|_| Address::generate(env)).collect();
+        let admins: Vec<Address> = std_admins.iter().fold(vec![env], |mut v, a| {
+            v.push_back(a.clone());
+            v
+        });
         env.as_contract(&contract_id, || init(env, admins.clone(), threshold));
         (contract_id, admins)
     }

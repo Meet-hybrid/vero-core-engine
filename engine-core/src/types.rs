@@ -1,16 +1,4 @@
-use soroban_sdk::{contracttype, contracterror};
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub enum TreasuryError {
-    InvalidBalance = 1,
-}
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub enum BurnError {
-    ZeroAddress = 1,
-}
+use soroban_sdk::{contracttype, Address, BytesN, Map, String, Symbol, Vec};
 
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -33,15 +21,30 @@ pub enum BreakerState {
 pub struct StateCommitment {
     pub sequence: u64,
     pub state_hash: soroban_sdk::BytesN<32>,
+    pub ledger: u32,
+    pub author: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasurySnapshot {
+    pub id: u64,
+    pub total_balance: i128,
+    pub account_count: u32,
+    pub ledger: u32,
+    pub timestamp: String,
+    pub state_hash: BytesN<32>,
+    pub triggered_by: String,
+    pub context: Map<Symbol, soroban_sdk::Val>,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Proposal {
     pub id: u64,
-    pub proposer: soroban_sdk::Address,
-    pub action_hash: soroban_sdk::BytesN<32>,
-    pub approved_by: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub state: u32, 
-    pub voting_deadline: u32, // Absolute ledger sequence where voting window closes
+    pub proposer: Address,
+    pub action_hash: BytesN<32>,
+    pub approved_by: Vec<Address>,
+    pub state: u32,
+    pub voting_deadline: u32,
 }

@@ -45,7 +45,8 @@ mod tests {
             action_hash: dummy_hash(env),
             proposer: proposer.clone(),
             approved_by: vec![env],
-            state: ProposalState::Pending,
+            state: ProposalState::Pending as u32,
+            voting_deadline: 0,
         }
     }
 
@@ -88,7 +89,7 @@ mod tests {
             governance::approve(&env, &s1, id);
             env.ledger().with_mut(|l| l.sequence_number += 721);
             let executed_prop = governance::execute(&env, id);
-            assert_eq!(executed_prop.state, ProposalState::Executed);
+            assert_eq!(executed_prop.state, ProposalState::Executed as u32);
         });
     }
 
@@ -115,7 +116,7 @@ mod tests {
                 .unwrap()
                 .0
                 .state;
-            assert_eq!(state, ProposalState::Executed);
+            assert_eq!(state, ProposalState::Executed as u32);
         });
     }
 
@@ -141,7 +142,7 @@ mod tests {
                 .unwrap()
                 .0
                 .state;
-            assert_eq!(state, ProposalState::Approved);
+            assert_eq!(state, ProposalState::Approved as u32);
         });
     }
 
@@ -181,7 +182,7 @@ mod tests {
                 .unwrap()
                 .0
                 .state;
-            assert_eq!(state, ProposalState::Approved);
+            assert_eq!(state, ProposalState::Approved as u32);
         });
     }
 
@@ -210,7 +211,7 @@ mod tests {
                     .unwrap()
                     .0
                     .state,
-                ProposalState::Pending
+                ProposalState::Pending as u32
             );
 
             governance::approve(&env, &b, id);
@@ -225,12 +226,12 @@ mod tests {
                     .unwrap()
                     .0
                     .state,
-                ProposalState::Approved
+                ProposalState::Approved as u32
             );
 
             env.ledger().with_mut(|l| l.sequence_number += 721);
             let prop = governance::execute(&env, id);
-            assert_eq!(prop.state, ProposalState::Executed);
+            assert_eq!(prop.state, ProposalState::Executed as u32);
         });
     }
 

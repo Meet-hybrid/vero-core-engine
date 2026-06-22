@@ -2,8 +2,9 @@ use crate::event_utils::publish_event;
 use crate::types::{Proposal, ProposalState};
 use soroban_sdk::{
     contracterror, panic_with_error, symbol_short, token, vec, Address, BytesN, Env, Map, Symbol,
-    Val, Vec,
+    Vec,
 };
+use soroban_sdk::IntoVal;
 
 const KEY_PROPOSALS: Symbol = symbol_short!("PROPS");
 const KEY_SIGNERS: Symbol = symbol_short!("SIGNERS");
@@ -24,6 +25,8 @@ pub enum GovError {
     InsufficientStake = 7,
 }
 
+const MAX_THRESHOLD: u32 = 100;
+
 pub fn init(
     env: &Env,
     signers: Vec<Address>,
@@ -31,7 +34,10 @@ pub fn init(
     stake_token: Address,
     min_stake: i128,
 ) {
-    if threshold == 0 || threshold > signers.len() {
+    if threshold == 0 || threshold > signers.len() || threshold > MAX_THRESHOLD {
+        panic_with_error!(env, GovError::NotASigner);
+    }
+    if min_stake < 0 {
         panic_with_error!(env, GovError::NotASigner);
     }
     env.storage().instance().set(&KEY_SIGNERS, &signers);
@@ -49,11 +55,14 @@ pub fn propose(env: &Env, proposal: Proposal) -> u64 {
         .get(&KEY_PROPOSALS)
         .unwrap_or(Map::new(env));
 
-    let unlock_ledger = env.ledger().sequence() + TIMELOCK_LEDGERS;
+    let unlock_ledger = env.ledger()
+        .sequence()
+        .checked_add(TIMELOCK_LEDGERS)
+        .unwrap_or_else(|| panic_with_error!(env, GovError::InvalidStateTransition));
     let id = proposal.id;
 
     let mut prop = proposal;
-    prop.state = ProposalState::Pending;
+    prop.state = ProposalState::Pending as u32;
 
     props.set(id, (prop, unlock_ledger));
     env.storage().instance().set(&KEY_PROPOSALS, &props);
@@ -64,7 +73,7 @@ pub fn propose(env: &Env, proposal: Proposal) -> u64 {
     );
 
     let mut payload = Map::new(env);
-    payload.set(Symbol::short("proposal_id"), id.into());
+    payload.set(symbol_short!("prop_id"), id.into_val(env));
     publish_event(
         env,
         BytesN::from_array(env, &[0u8; 32]),
@@ -90,7 +99,7 @@ pub fn approve(env: &Env, voter: &Address, proposal_id: u64) {
         .get(proposal_id)
         .unwrap_or_else(|| panic_with_error!(env, GovError::ProposalNotFound));
 
-    if prop.state != ProposalState::Pending {
+    if prop.state != ProposalState::Pending as u32 {
         panic_with_error!(env, GovError::InvalidStateTransition);
     }
 
@@ -103,7 +112,7 @@ pub fn approve(env: &Env, voter: &Address, proposal_id: u64) {
     let threshold: u32 = env.storage().instance().get(&KEY_THRESH).unwrap_or(1);
 
     if prop.approved_by.len() >= threshold {
-        prop.state = ProposalState::Approved;
+        prop.state = ProposalState::Approved as u32;
 
         env.events().publish(
             (symbol_short!("GOV"), symbol_short!("approved")),
@@ -111,7 +120,7 @@ pub fn approve(env: &Env, voter: &Address, proposal_id: u64) {
         );
 
         let mut payload = Map::new(env);
-        payload.set(Symbol::short("proposal_id"), proposal_id.into());
+        payload.set(symbol_short!("prop_id"), proposal_id.into_val(env));
         publish_event(
             env,
             BytesN::from_array(env, &[0u8; 32]),
@@ -123,7 +132,7 @@ pub fn approve(env: &Env, voter: &Address, proposal_id: u64) {
     props.set(proposal_id, (prop.clone(), unlock));
     env.storage().instance().set(&KEY_PROPOSALS, &props);
 
-    if prop.state == ProposalState::Approved && env.ledger().sequence() >= unlock {
+    if prop.state == ProposalState::Approved as u32 && env.ledger().sequence() >= unlock {
         execute(env, proposal_id);
     }
 }
@@ -139,7 +148,7 @@ pub fn execute(env: &Env, proposal_id: u64) -> Proposal {
         .get(proposal_id)
         .unwrap_or_else(|| panic_with_error!(env, GovError::ProposalNotFound));
 
-    if prop.state != ProposalState::Approved {
+    if prop.state != ProposalState::Approved as u32 {
         panic_with_error!(env, GovError::InvalidStateTransition);
     }
 
@@ -147,7 +156,7 @@ pub fn execute(env: &Env, proposal_id: u64) -> Proposal {
         panic_with_error!(env, GovError::TimelockActive);
     }
 
-    prop.state = ProposalState::Executed;
+    prop.state = ProposalState::Executed as u32;
     props.set(proposal_id, (prop.clone(), unlock));
     env.storage().instance().set(&KEY_PROPOSALS, &props);
 
@@ -157,7 +166,7 @@ pub fn execute(env: &Env, proposal_id: u64) -> Proposal {
     );
 
     let mut payload = Map::new(env);
-    payload.set(Symbol::short("proposal_id"), proposal_id.into());
+    payload.set(symbol_short!("prop_id"), proposal_id.into_val(env));
     publish_event(
         env,
         BytesN::from_array(env, &[0u8; 32]),
